@@ -2,11 +2,13 @@ import Fastify from "fastify";
 import Redis from "ioredis";
 import { env } from "./config/env.js";
 import { closeDb, query } from "./db/db.js";
-import { closeQueue } from "./queue/queue.js";
+import { closeQueue, REFRESH_JOBS_QUEUE_NAME } from "./queue/queue.js";
 import { refreshRoutes } from "./routes/refreshRoutes.js";
 
 const app = Fastify({
-  logger: true
+  logger: {
+    level: env.logLevel
+  }
 });
 
 const redis = new Redis(env.redisUrl, {
@@ -57,8 +59,28 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
 
 async function start(): Promise<void> {
   try {
+    app.log.info(
+      {
+        event: "api_starting",
+        host: env.host,
+        port: env.port,
+        queue: REFRESH_JOBS_QUEUE_NAME
+      },
+      "Starting API server"
+    );
+
     await app.register(refreshRoutes);
     await app.listen({ host: env.host, port: env.port });
+
+    app.log.info(
+      {
+        event: "api_started",
+        host: env.host,
+        port: env.port,
+        queue: REFRESH_JOBS_QUEUE_NAME
+      },
+      "API server started"
+    );
   } catch (error) {
     app.log.error(error);
     process.exit(1);

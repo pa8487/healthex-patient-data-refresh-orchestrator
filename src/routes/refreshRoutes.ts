@@ -36,16 +36,38 @@ export const refreshRoutes: FastifyPluginAsync = async (app) => {
     try {
       filters = parseScheduleFilters(request.body);
     } catch (error) {
+      app.log.warn(
+        {
+          event: "schedule_request_invalid",
+          requestId: request.id
+        },
+        "Schedule request rejected"
+      );
+
       return reply.code(400).send({
         status: "invalid_request",
         message: error instanceof Error ? error.message : "Invalid schedule request"
       });
     }
 
-    const result = await scheduleEligibleRefreshJobs(filters);
+    app.log.info(
+      {
+        event: "schedule_request_received",
+        requestId: request.id,
+        filters
+      },
+      "Schedule request received"
+    );
+
+    const result = await scheduleEligibleRefreshJobs(filters, {
+      logger: app.log,
+      requestId: request.id
+    });
 
     app.log.info(
       {
+        event: "schedule_request_completed",
+        requestId: request.id,
         eligibleStudies: result.eligibleStudyCount,
         candidates: result.candidateCount,
         inserted: result.insertedCount,

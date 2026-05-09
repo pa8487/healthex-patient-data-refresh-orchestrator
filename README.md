@@ -13,26 +13,27 @@ Install dependencies and start infrastructure:
 
 ```bash
 npm install
-docker compose up -d postgres redis
+npm run bootstrap
 ```
 
-Seed deterministic demo data:
+`npm run bootstrap` starts Postgres and Redis, waits for both services, clears the local queue, applies the schema through the seed path, and loads deterministic demo data. Defaults work without a `.env` file; copy `.env.example` to `.env` only when overriding ports, database URLs, worker concurrency, or log level.
 
-```bash
-npm run seed
-```
-
-Expected output:
+Expected seed output:
 
 ```text
 Seed complete: 4 patients, 3 studies, 5 patient-study rows, 6 patient EHR endpoints.
 ```
 
+To apply only the schema:
+
+```bash
+npm run db:migrate
+```
+
 Run checks:
 
 ```bash
-npm run typecheck
-npm run build
+npm run verify
 ```
 
 Start the API:
@@ -105,6 +106,8 @@ npm run worker
 
 The worker consumes BullMQ jobs from `refresh-jobs`, atomically claims each DB job, respects endpoint throttling, calls the in-process mock EHR start/status flow, and updates `refresh_jobs` plus `patient_studies`. Seeded endpoints cover success, transient retry, rate-limit retry, and permanent failure cases.
 
+Logs are structured JSON. Useful event names to follow are `schedule_request_received`, `schedule_candidates_found`, `schedule_jobs_enqueued`, `refresh_job_dequeued`, `refresh_claim_attempt`, `refresh_job_claimed`, `mock_ehr_refresh_started`, `refresh_retry_scheduled`, `refresh_job_completed`, and `refresh_job_failed`.
+
 ## Query The Database
 
 Open `psql` inside the Postgres container:
@@ -136,8 +139,7 @@ To reset local data:
 
 ```bash
 docker compose down -v
-docker compose up -d postgres redis
-npm run seed
+npm run bootstrap
 ```
 
 ## Decisions And Tradeoffs
