@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isLogLevel, type LogLevel } from "../logging/logger.js";
 
 function loadDotEnvFile(filePath = resolve(process.cwd(), ".env")): void {
   if (!existsSync(filePath)) {
@@ -34,15 +35,41 @@ function loadDotEnvFile(filePath = resolve(process.cwd(), ".env")): void {
 
 loadDotEnvFile();
 
+function readPositiveInteger(name: string, defaultValue: number): number {
+  const rawValue = process.env[name];
+
+  if (rawValue === undefined) {
+    return defaultValue;
+  }
+
+  const parsedValue = Number(rawValue);
+
+  if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+
+  return parsedValue;
+}
+
+function readLogLevel(): LogLevel {
+  const logLevel = process.env.LOG_LEVEL ?? "info";
+
+  if (!isLogLevel(logLevel)) {
+    throw new Error("LOG_LEVEL must be one of debug, info, warn, or error");
+  }
+
+  return logLevel;
+}
+
 export const env = {
   host: process.env.HOST ?? "0.0.0.0",
-  port: Number(process.env.PORT ?? 3000),
-  logLevel: process.env.LOG_LEVEL ?? "info",
+  port: readPositiveInteger("PORT", 3000),
+  logLevel: readLogLevel(),
   databaseUrl:
     process.env.DATABASE_URL ??
     "postgres://healthex:healthex@localhost:55432/healthex",
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
-  pgPoolMax: Number(process.env.PG_POOL_MAX ?? 10),
-  workerConcurrency: Number(process.env.WORKER_CONCURRENCY ?? 4),
+  pgPoolMax: readPositiveInteger("PG_POOL_MAX", 10),
+  workerConcurrency: readPositiveInteger("WORKER_CONCURRENCY", 4),
   workerId: process.env.WORKER_ID ?? `worker-${process.pid}`
 };

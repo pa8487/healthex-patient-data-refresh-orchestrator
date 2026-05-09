@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { closeDb } from "../db/db.js";
 import { createConsoleLogger } from "../logging/logger.js";
 import {
+  closeQueue,
   getQueueConnection,
   REFRESH_JOBS_QUEUE_NAME,
   type RefreshJobPayload
@@ -115,17 +116,27 @@ export function createRefreshWorker(): Worker<RefreshJobPayload> {
 }
 
 const worker = createRefreshWorker();
+let shutdownStarted = false;
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shutdownStarted) {
+    return;
+  }
+
+  shutdownStarted = true;
   logger.info(
     { event: "refresh_worker_shutdown", signal },
     "Stopping refresh worker"
   );
   await worker.close();
-  await getQueueConnection().quit();
+  await closeQueue();
   await closeDb();
   logger.info({ event: "refresh_worker_stopped", signal }, "Refresh worker stopped");
 }
 
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
+process.once("SIGINT", (signal) => {
+  void shutdown(signal);
+});
+process.once("SIGTERM", (signal) => {
+  void shutdown(signal);
+});

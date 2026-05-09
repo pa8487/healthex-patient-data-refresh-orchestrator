@@ -10,6 +10,7 @@ import {
   claimPendingRefreshJob,
   completeRefreshJob,
   failRefreshJob,
+  markPendingRefreshJobsFailed,
   scheduleRefreshJobRetry
 } from "../repositories/refreshJobRepository.js";
 import { refreshFromMockEhr } from "./mockEhrApi.js";
@@ -57,15 +58,39 @@ async function scheduleRetry(
     errorMessage
   );
 
-  await getRefreshQueue().add(
-    "refresh",
-    { refreshJobId: job.id },
-    {
-      delay: delayMs,
-      jobId: `${job.id}:attempt:${job.attempts + 1}`,
-      priority: toBullMqPriority(job.priority)
+  try {
+    await getRefreshQueue().add(
+      "refresh",
+      { refreshJobId: job.id },
+      {
+        delay: delayMs,
+        jobId: `${job.id}:attempt:${job.attempts + 1}`,
+        priority: toBullMqPriority(job.priority)
+      }
+    );
+  } catch (error) {
+    try {
+      await markPendingRefreshJobsFailed(
+        [job.id],
+        "QUEUE_RETRY_ENQUEUE_FAILED",
+        error instanceof Error ? error.message : String(error)
+      );
+    } catch (cleanupError) {
+      options.logger.error(
+        {
+          event: "refresh_retry_enqueue_cleanup_failed",
+          refreshJobId: job.id,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError)
+        },
+        "Failed to mark unenqueued retry job as failed"
+      );
     }
-  );
+
+    throw error;
+  }
 
   options.logger.info(
     {

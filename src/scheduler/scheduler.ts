@@ -10,6 +10,7 @@ import {
 import { toBullMqPriority } from "../queue/priority.js";
 import {
   createPendingRefreshJob,
+  markPendingRefreshJobsFailed,
   type RefreshJob
 } from "../repositories/refreshJobRepository.js";
 import { calculateRefreshPriority } from "./priority.js";
@@ -118,19 +119,44 @@ export async function scheduleEligibleRefreshJobs(
   if (insertedJobs.length > 0) {
     const queue = getRefreshQueue();
 
-    await queue.addBulk(
-      insertedJobs.map((job) => ({
-        name: "refresh",
-        data: {
-          refreshJobId: job.id
-        },
-        opts: {
-          jobId: job.id,
-          delay: Math.max(job.scheduledAt.getTime() - Date.now(), 0),
-          priority: toBullMqPriority(job.priority)
-        }
-      }))
-    );
+    try {
+      await queue.addBulk(
+        insertedJobs.map((job) => ({
+          name: "refresh",
+          data: {
+            refreshJobId: job.id
+          },
+          opts: {
+            jobId: job.id,
+            delay: Math.max(job.scheduledAt.getTime() - Date.now(), 0),
+            priority: toBullMqPriority(job.priority)
+          }
+        }))
+      );
+    } catch (error) {
+      try {
+        await markPendingRefreshJobsFailed(
+          insertedJobs.map((job) => job.id),
+          "QUEUE_ENQUEUE_FAILED",
+          error instanceof Error ? error.message : String(error)
+        );
+      } catch (cleanupError) {
+        logger.error(
+          {
+            event: "schedule_enqueue_cleanup_failed",
+            requestId: options.requestId,
+            refreshJobIds: insertedJobs.map((job) => job.id),
+            error:
+              cleanupError instanceof Error
+                ? cleanupError.message
+                : String(cleanupError)
+          },
+          "Failed to mark unenqueued refresh jobs as failed"
+        );
+      }
+
+      throw error;
+    }
 
     logger.info(
       {

@@ -9,7 +9,14 @@ type ScheduleRequestBody = {
   endpoints?: unknown;
 };
 
-function parseStringArray(value: unknown): string[] | undefined {
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseStringArray(
+  value: unknown,
+  fieldName: string,
+  options: { uuid?: boolean } = {}
+): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -18,14 +25,18 @@ function parseStringArray(value: unknown): string[] | undefined {
     throw new Error("Schedule filters must be arrays of strings");
   }
 
+  if (options.uuid && value.some((item) => !uuidPattern.test(item))) {
+    throw new Error(`${fieldName} must contain valid UUID strings`);
+  }
+
   return value;
 }
 
 function parseScheduleFilters(body: ScheduleRequestBody | undefined): ScheduleFilters {
   return {
-    patientIds: parseStringArray(body?.patientIds),
-    studyIds: parseStringArray(body?.studyIds),
-    endpoints: parseStringArray(body?.endpoints)
+    patientIds: parseStringArray(body?.patientIds, "patientIds", { uuid: true }),
+    studyIds: parseStringArray(body?.studyIds, "studyIds", { uuid: true }),
+    endpoints: parseStringArray(body?.endpoints, "endpoints")
   };
 }
 

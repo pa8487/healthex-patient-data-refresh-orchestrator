@@ -36,6 +36,20 @@ export type ClaimedRefreshJob = RefreshJob & {
   status: "claimed";
 };
 
+function mapRefreshJob(row: RefreshJobRow): RefreshJob {
+  return {
+    id: row.id,
+    patientId: row.patient_id,
+    studyId: row.study_id,
+    endpoint: row.endpoint,
+    priority: row.priority,
+    status: row.status,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    scheduledAt: row.scheduled_at
+  };
+}
+
 export async function createPendingRefreshJob(
   input: CreateRefreshJobInput
 ): Promise<RefreshJob | null> {
@@ -78,17 +92,7 @@ export async function createPendingRefreshJob(
     return null;
   }
 
-  return {
-    id: row.id,
-    patientId: row.patient_id,
-    studyId: row.study_id,
-    endpoint: row.endpoint,
-    priority: row.priority,
-    status: row.status,
-    attempts: row.attempts,
-    maxAttempts: row.max_attempts,
-    scheduledAt: row.scheduled_at
-  };
+  return mapRefreshJob(row);
 }
 
 export async function claimPendingRefreshJob(
@@ -127,15 +131,8 @@ export async function claimPendingRefreshJob(
   }
 
   return {
-    id: row.id,
-    patientId: row.patient_id,
-    studyId: row.study_id,
-    endpoint: row.endpoint,
-    priority: row.priority,
-    status: row.status,
-    attempts: row.attempts,
-    maxAttempts: row.max_attempts,
-    scheduledAt: row.scheduled_at
+    ...mapRefreshJob(row),
+    status: "claimed"
   };
 }
 
@@ -202,6 +199,29 @@ export async function scheduleRefreshJobRetry(
   }
 
   return row.scheduled_at;
+}
+
+export async function markPendingRefreshJobsFailed(
+  refreshJobIds: string[],
+  errorType: string,
+  errorMessage: string
+): Promise<void> {
+  if (refreshJobIds.length === 0) {
+    return;
+  }
+
+  await query(
+    `
+      UPDATE refresh_jobs
+      SET status = 'failed',
+          completed_at = NOW(),
+          error_type = $2,
+          error_message = $3
+      WHERE id = ANY($1::UUID[])
+        AND status = 'pending'
+    `,
+    [refreshJobIds, errorType, errorMessage]
+  );
 }
 
 export async function failRefreshJob(

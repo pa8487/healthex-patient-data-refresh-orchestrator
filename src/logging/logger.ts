@@ -7,7 +7,7 @@ export type StructuredLogger = {
   debug(fields: LogFields, message: string): void;
 };
 
-type LogLevel = "info" | "warn" | "error" | "debug";
+export type LogLevel = "info" | "warn" | "error" | "debug";
 
 const logLevelPriority: Record<LogLevel, number> = {
   debug: 10,
@@ -16,15 +16,19 @@ const logLevelPriority: Record<LogLevel, number> = {
   error: 40
 };
 
+export function isLogLevel(value: string): value is LogLevel {
+  return (
+    value === "debug" ||
+    value === "info" ||
+    value === "warn" ||
+    value === "error"
+  );
+}
+
 function getConfiguredLogLevel(): LogLevel {
   const level = process.env.LOG_LEVEL;
 
-  if (
-    level === "debug" ||
-    level === "info" ||
-    level === "warn" ||
-    level === "error"
-  ) {
+  if (level !== undefined && isLogLevel(level)) {
     return level;
   }
 

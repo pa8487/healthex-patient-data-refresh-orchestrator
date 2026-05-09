@@ -14,7 +14,7 @@
     "demo:schedule:normal": "tsx scripts/scheduleDemoPriorityJobs.ts",
     "bootstrap": "npm run infra:down && npm run infra:up && npm run wait:services && npm run queue:clear && npm run db:seed && npm run demo:schedule:normal",
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "verify": "npm run typecheck && npm run build",
     "seed": "npm run db:seed",
     "start": "node dist/index.js",

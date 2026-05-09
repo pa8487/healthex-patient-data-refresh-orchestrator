@@ -16,6 +16,8 @@ const redis = new Redis(env.redisUrl, {
   lazyConnect: true
 });
 
+let shutdownStarted = false;
+
 app.get("/health", async (_request, reply) => {
   const checks = {
     api: "ok",
@@ -50,6 +52,11 @@ app.get("/health", async (_request, reply) => {
 });
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shutdownStarted) {
+    return;
+  }
+
+  shutdownStarted = true;
   app.log.info({ signal }, "Shutting down");
   await app.close();
   await closeQueue();
@@ -87,7 +94,11 @@ async function start(): Promise<void> {
   }
 }
 
-process.once("SIGINT", shutdown);
-process.once("SIGTERM", shutdown);
+process.once("SIGINT", (signal) => {
+  void shutdown(signal);
+});
+process.once("SIGTERM", (signal) => {
+  void shutdown(signal);
+});
 
 void start();
