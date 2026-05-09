@@ -16,7 +16,7 @@ npm install
 npm run bootstrap
 ```
 
-`npm run bootstrap` starts Postgres and Redis, waits for both services, clears the local queue, applies the schema through the seed path, and loads deterministic demo data. Defaults work without a `.env` file; copy `.env.example` to `.env` only when overriding ports, database URLs, worker concurrency, or log level.
+`npm run bootstrap` starts Postgres and Redis, waits for both services, clears the local queue, applies the schema through the seed path, loads deterministic demo data, and pre-schedules two normal-priority demo jobs. Defaults work without a `.env` file; copy `.env.example` to `.env` only when overriding ports, database URLs, worker concurrency, or log level.
 
 Expected seed output:
 
@@ -50,34 +50,15 @@ Health check:
 curl -s http://127.0.0.1:3000/health
 ```
 
-Trigger a filtered scheduling batch before starting the worker:
+Inspect the two normal-priority jobs that bootstrap scheduled. Stop any running workers before this priority demo, otherwise they may consume the bootstrap jobs immediately.
 
 ```bash
-curl -s -X POST http://127.0.0.1:3000/schedule \
-  -H 'content-type: application/json' \
-  -d '{
-    "patientIds": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
-    "studyIds": ["11111111-1111-4111-8111-111111111111"],
-    "endpoints": ["epic-success"]
-  }'
+npm run queue:inspect
 ```
 
-After a fresh seed, this targets one due patient-study row and one active endpoint:
+The queue snapshot shows each BullMQ job, DB refresh job, domain priority, BullMQ priority, readiness, and expected order. Domain priority `3` is highest in this app and maps to BullMQ priority `1`, because BullMQ dequeues lower numeric priority first.
 
-```json
-{
-  "status": "scheduled",
-  "queue": "refresh-jobs",
-  "eligibleStudies": 1,
-  "candidates": 1,
-  "inserted": 1,
-  "skipped": 0,
-  "enqueued": 1,
-  "jobIds": ["..."]
-}
-```
-
-Then run the unfiltered scheduler. It should find all due work, skip the already-active filtered job, and create the remaining due endpoint jobs:
+Then manually trigger the unfiltered scheduler before starting the worker. It should find all due work, skip the two active normal-priority jobs from bootstrap, and create the remaining higher-priority due endpoint jobs:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3000/schedule
@@ -91,12 +72,20 @@ Expected shape:
   "queue": "refresh-jobs",
   "eligibleStudies": 3,
   "candidates": 6,
-  "inserted": 5,
-  "skipped": 1,
-  "enqueued": 5,
+  "inserted": 4,
+  "skipped": 2,
+  "enqueued": 4,
   "jobIds": ["..."]
 }
 ```
+
+Inspect the queue again to see ready high-priority jobs ahead of the bootstrap jobs:
+
+```bash
+npm run queue:inspect
+```
+
+Scheduled jobs include a small jitter, so `readyAt` can differ by a few seconds. Start the worker after scheduling both batches for the clearest priority demo.
 
 After confirming jobs were scheduled, start the refresh worker in a second terminal:
 

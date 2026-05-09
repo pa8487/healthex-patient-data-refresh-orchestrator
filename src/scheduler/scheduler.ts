@@ -7,6 +7,7 @@ import {
   findEligibleRefreshCandidates,
   type ScheduleFilters
 } from "../repositories/patientStudyRepository.js";
+import { toBullMqPriority } from "../queue/priority.js";
 import {
   createPendingRefreshJob,
   type RefreshJob
@@ -94,6 +95,7 @@ export async function scheduleEligibleRefreshJobs(
           studyId: job.studyId,
           endpoint: job.endpoint,
           priority: job.priority,
+          bullmqPriority: toBullMqPriority(job.priority),
           scheduledAt: job.scheduledAt.toISOString()
         },
         "Refresh job inserted"
@@ -125,7 +127,7 @@ export async function scheduleEligibleRefreshJobs(
         opts: {
           jobId: job.id,
           delay: Math.max(job.scheduledAt.getTime() - Date.now(), 0),
-          priority: job.priority
+          priority: toBullMqPriority(job.priority)
         }
       }))
     );
@@ -135,7 +137,8 @@ export async function scheduleEligibleRefreshJobs(
         event: "schedule_jobs_enqueued",
         requestId: options.requestId,
         enqueued: insertedJobs.length,
-        queue: queue.name
+        queue: queue.name,
+        priorityMapping: "domain priority 3 maps to BullMQ priority 1"
       },
       "Refresh jobs enqueued"
     );

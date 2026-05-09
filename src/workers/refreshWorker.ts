@@ -70,6 +70,7 @@ export function createRefreshWorker(): Worker<RefreshJobPayload> {
         event: "refresh_job_dequeued",
         bullJobId: job.id,
         refreshJobId: job.data.refreshJobId,
+        bullmqPriority: job.opts.priority,
         workerId: env.workerId
       },
       "Refresh job dequeued"

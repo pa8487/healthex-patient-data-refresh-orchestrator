@@ -1,5 +1,6 @@
 import { getRefreshQueue } from "../queue/queue.js";
 import { checkEndpointThrottle } from "../queue/endpointThrottle.js";
+import { toBullMqPriority } from "../queue/priority.js";
 import {
   createConsoleLogger,
   type StructuredLogger
@@ -62,7 +63,7 @@ async function scheduleRetry(
     {
       delay: delayMs,
       jobId: `${job.id}:attempt:${job.attempts + 1}`,
-      priority: job.priority
+      priority: toBullMqPriority(job.priority)
     }
   );
 
@@ -76,6 +77,8 @@ async function scheduleRetry(
       endpoint: job.endpoint,
       attempt: job.attempts,
       maxAttempts: job.maxAttempts,
+      priority: job.priority,
+      bullmqPriority: toBullMqPriority(job.priority),
       delayMs,
       scheduledAt: scheduledAt.toISOString(),
       errorType,
