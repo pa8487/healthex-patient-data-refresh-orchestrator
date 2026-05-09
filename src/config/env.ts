@@ -5,5 +5,7 @@ export const env = {
     process.env.DATABASE_URL ??
     "postgres://healthex:healthex@localhost:55432/healthex",
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
-  pgPoolMax: Number(process.env.PG_POOL_MAX ?? 10)
+  pgPoolMax: Number(process.env.PG_POOL_MAX ?? 10),
+  workerConcurrency: Number(process.env.WORKER_CONCURRENCY ?? 4),
+  workerId: process.env.WORKER_ID ?? `worker-${process.pid}`
 };

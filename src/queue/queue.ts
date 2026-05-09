@@ -11,7 +11,7 @@ export type RefreshJobPayload = {
 let queueConnection: IORedis | null = null;
 let refreshQueue: Queue<RefreshJobPayload> | null = null;
 
-function getQueueConnection(): IORedis {
+export function getQueueConnection(): IORedis {
   if (queueConnection === null) {
     queueConnection = new IORedis(env.redisUrl, {
       maxRetriesPerRequest: null,

@@ -1,4 +1,4 @@
-import { query } from "../db/db.js";
+import { query, withTransaction } from "../db/db.js";
 
 export type CreateRefreshJobInput = {
   patientId: string;
@@ -14,6 +14,8 @@ export type RefreshJob = {
   endpoint: string;
   priority: number;
   status: "pending" | "claimed" | "completed" | "failed";
+  attempts: number;
+  maxAttempts: number;
   scheduledAt: Date;
 };
 
@@ -24,7 +26,13 @@ type RefreshJobRow = {
   endpoint: string;
   priority: number;
   status: RefreshJob["status"];
+  attempts: number;
+  max_attempts: number;
   scheduled_at: Date;
+};
+
+export type ClaimedRefreshJob = RefreshJob & {
+  status: "claimed";
 };
 
 export async function createPendingRefreshJob(
@@ -51,6 +59,8 @@ export async function createPendingRefreshJob(
         endpoint,
         priority,
         status,
+        attempts,
+        max_attempts,
         scheduled_at
     `,
     [input.patientId, input.studyId, input.endpoint, input.priority]
@@ -68,6 +78,144 @@ export async function createPendingRefreshJob(
     endpoint: row.endpoint,
     priority: row.priority,
     status: row.status,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
     scheduledAt: row.scheduled_at
   };
+}
+
+export async function claimPendingRefreshJob(
+  refreshJobId: string,
+  workerId: string
+): Promise<ClaimedRefreshJob | null> {
+  const result = await query<RefreshJobRow>(
+    `
+      UPDATE refresh_jobs
+      SET status = 'claimed',
+          claimed_at = NOW(),
+          worker_id = $2,
+          attempts = attempts + 1,
+          error_type = NULL,
+          error_message = NULL
+      WHERE id = $1
+        AND status = 'pending'
+        AND scheduled_at <= NOW()
+      RETURNING
+        id,
+        patient_id,
+        study_id,
+        endpoint,
+        priority,
+        status,
+        attempts,
+        max_attempts,
+        scheduled_at
+    `,
+    [refreshJobId, workerId]
+  );
+
+  const row = result.rows[0];
+  if (row === undefined || row.status !== "claimed") {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    patientId: row.patient_id,
+    studyId: row.study_id,
+    endpoint: row.endpoint,
+    priority: row.priority,
+    status: row.status,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    scheduledAt: row.scheduled_at
+  };
+}
+
+export async function completeRefreshJob(job: ClaimedRefreshJob): Promise<void> {
+  await withTransaction(async (client) => {
+    const completedJob = await client.query(
+      `
+        UPDATE refresh_jobs
+        SET status = 'completed',
+            completed_at = NOW(),
+            error_type = NULL,
+            error_message = NULL
+        WHERE id = $1
+          AND status = 'claimed'
+        RETURNING id
+      `,
+      [job.id]
+    );
+
+    if (completedJob.rowCount !== 1) {
+      throw new Error(`Refresh job ${job.id} was not claimable for completion`);
+    }
+
+    await client.query(
+      `
+        UPDATE patient_studies ps
+        SET last_refresh_at = NOW(),
+            next_refresh_at = NOW() + (s.refresh_frequency_minutes * INTERVAL '1 minute')
+        FROM studies s
+        WHERE ps.patient_id = $1
+          AND ps.study_id = $2
+          AND s.id = ps.study_id
+      `,
+      [job.patientId, job.studyId]
+    );
+  });
+}
+
+export async function scheduleRefreshJobRetry(
+  job: ClaimedRefreshJob,
+  delayMs: number,
+  errorType: string,
+  errorMessage: string
+): Promise<Date> {
+  const result = await query<{ scheduled_at: Date }>(
+    `
+      UPDATE refresh_jobs
+      SET status = 'pending',
+          scheduled_at = NOW() + ($2::INT * INTERVAL '1 millisecond'),
+          claimed_at = NULL,
+          worker_id = NULL,
+          error_type = $3,
+          error_message = $4
+      WHERE id = $1
+        AND status = 'claimed'
+      RETURNING scheduled_at
+    `,
+    [job.id, delayMs, errorType, errorMessage]
+  );
+
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new Error(`Refresh job ${job.id} was not claimable for retry`);
+  }
+
+  return row.scheduled_at;
+}
+
+export async function failRefreshJob(
+  job: ClaimedRefreshJob,
+  errorType: string,
+  errorMessage: string
+): Promise<void> {
+  const result = await query(
+    `
+      UPDATE refresh_jobs
+      SET status = 'failed',
+          completed_at = NOW(),
+          error_type = $2,
+          error_message = $3
+      WHERE id = $1
+        AND status = 'claimed'
+    `,
+    [job.id, errorType, errorMessage]
+  );
+
+  if (result.rowCount !== 1) {
+    throw new Error(`Refresh job ${job.id} was not claimable for failure`);
+  }
 }

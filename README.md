@@ -96,6 +96,20 @@ Calling the endpoint again should skip those same 3 rows because active jobs alr
 }
 ```
 
+After confirming jobs were scheduled, start the refresh worker in a second terminal:
+
+```bash
+npm run worker
+```
+
+Or, after building:
+
+```bash
+npm run worker:start
+```
+
+The worker consumes BullMQ jobs from `refresh-jobs`, atomically claims each DB job, and then updates `refresh_jobs` and `patient_studies` after processing.
+
 To reset local data:
 
 ```bash
@@ -106,4 +120,4 @@ npm run seed
 
 ## Decisions And Tradeoffs
 
-PostgreSQL is the system of record for refresh eligibility, job lifecycle state, and duplicate prevention. BullMQ is used only to dispatch successfully inserted work, so Redis queue state is not treated as durable business state. Duplicate active refreshes are prevented by a partial unique index on `refresh_jobs(patient_id, study_id)` for `pending` and `claimed` jobs, with inserts using `ON CONFLICT DO NOTHING`. This keeps scheduling concurrency simple and reviewable. The current scheduler is intentionally small: it handles due-row discovery, priority calculation, DB job creation, duplicate skips, and queue enqueueing, but worker execution, retry handling, and mock EHR calls are left for the next implementation slice.
+PostgreSQL is the system of record for refresh eligibility, job lifecycle state, and duplicate prevention. BullMQ is used only to dispatch successfully inserted work, so Redis queue state is not treated as durable business state. Duplicate active refreshes are prevented by a partial unique index on `refresh_jobs(patient_id, study_id)` for `pending` and `claimed` jobs, with inserts using `ON CONFLICT DO NOTHING`. Workers atomically claim pending jobs in Postgres before calling the mock EHR service, so duplicate queue deliveries cannot double-process the same DB job. Retry handling is intentionally small and explicit: transient and rate-limit failures return to `pending` with exponential backoff, while permanent failures become terminal.
