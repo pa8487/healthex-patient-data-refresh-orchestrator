@@ -1,6 +1,6 @@
 # HealthEx Patient Data Refresh Orchestrator
 
-Small TypeScript backend that schedules patient data refresh jobs for EHR endpoints. It uses Fastify for HTTP, PostgreSQL as the durable source of truth, Redis + BullMQ for dispatch, and raw SQL only.
+Small TypeScript backend that schedules patient data refresh jobs across EHR endpoints. It uses Fastify for HTTP, PostgreSQL as the durable source of truth, Redis + BullMQ for dispatch, and raw SQL only.
 
 ## Setup And Run
 
@@ -9,21 +9,14 @@ Prerequisites:
 - Node.js 20+
 - Docker Compose
 
-Install dependencies:
+Install dependencies and start infrastructure:
 
 ```bash
 npm install
-```
-
-Start Postgres and Redis:
-
-```bash
 docker compose up -d postgres redis
 ```
 
-Postgres is exposed on host port `55432` to avoid collisions with a local Postgres on `5432`.
-
-Seed the database:
+Seed deterministic demo data:
 
 ```bash
 npm run seed
@@ -32,7 +25,7 @@ npm run seed
 Expected output:
 
 ```text
-Seed complete: 4 patients, 3 studies, 5 patient-study rows.
+Seed complete: 4 patients, 3 studies, 5 patient-study rows, 6 patient EHR endpoints.
 ```
 
 Run checks:
@@ -48,12 +41,6 @@ Start the API:
 npm run dev
 ```
 
-Or, after building:
-
-```bash
-npm start
-```
-
 ## Execute Scheduling
 
 Health check:
@@ -62,37 +49,51 @@ Health check:
 curl -s http://127.0.0.1:3000/health
 ```
 
-Trigger scheduling:
+Trigger a filtered scheduling batch before starting the worker:
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/schedule \
+  -H 'content-type: application/json' \
+  -d '{
+    "patientIds": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+    "studyIds": ["11111111-1111-4111-8111-111111111111"],
+    "endpoints": ["epic-success"]
+  }'
+```
+
+After a fresh seed, this targets one due patient-study row and one active endpoint:
+
+```json
+{
+  "status": "scheduled",
+  "queue": "refresh-jobs",
+  "eligibleStudies": 1,
+  "candidates": 1,
+  "inserted": 1,
+  "skipped": 0,
+  "enqueued": 1,
+  "jobIds": ["..."]
+}
+```
+
+Then run the unfiltered scheduler. It should find all due work, skip the already-active filtered job, and create the remaining due endpoint jobs:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3000/schedule
 ```
 
-After a fresh seed, 3 of the 5 seeded patient-study rows are due. The first scheduling call should create and enqueue 3 jobs:
+Expected shape:
 
 ```json
 {
   "status": "scheduled",
   "queue": "refresh-jobs",
-  "eligible": 3,
-  "inserted": 3,
-  "skipped": 0,
-  "enqueued": 3,
+  "eligibleStudies": 3,
+  "candidates": 6,
+  "inserted": 5,
+  "skipped": 1,
+  "enqueued": 5,
   "jobIds": ["..."]
-}
-```
-
-Calling the endpoint again should skip those same 3 rows because active jobs already exist:
-
-```json
-{
-  "status": "scheduled",
-  "queue": "refresh-jobs",
-  "eligible": 3,
-  "inserted": 0,
-  "skipped": 3,
-  "enqueued": 0,
-  "jobIds": []
 }
 ```
 
@@ -102,13 +103,34 @@ After confirming jobs were scheduled, start the refresh worker in a second termi
 npm run worker
 ```
 
-Or, after building:
+The worker consumes BullMQ jobs from `refresh-jobs`, atomically claims each DB job, respects endpoint throttling, calls the in-process mock EHR start/status flow, and updates `refresh_jobs` plus `patient_studies`. Seeded endpoints cover success, transient retry, rate-limit retry, and permanent failure cases.
+
+## Query The Database
+
+Open `psql` inside the Postgres container:
 
 ```bash
-npm run worker:start
+docker compose exec postgres psql -U healthex -d healthex
 ```
 
-The worker consumes BullMQ jobs from `refresh-jobs`, atomically claims each DB job, and then updates `refresh_jobs` and `patient_studies` after processing.
+Useful queries:
+
+```sql
+SELECT * FROM patients;
+SELECT * FROM studies;
+SELECT * FROM patient_studies ORDER BY next_refresh_at;
+SELECT * FROM patient_ehr_endpoints ORDER BY patient_id, ehr_endpoint;
+SELECT id, patient_id, study_id, endpoint, status, attempts, scheduled_at, error_type
+FROM refresh_jobs
+ORDER BY created_at;
+```
+
+Or run a one-off query without entering `psql`:
+
+```bash
+docker compose exec postgres psql -U healthex -d healthex \
+  -c "SELECT status, COUNT(*) FROM refresh_jobs GROUP BY status;"
+```
 
 To reset local data:
 
@@ -120,4 +142,4 @@ npm run seed
 
 ## Decisions And Tradeoffs
 
-PostgreSQL is the system of record for refresh eligibility, job lifecycle state, and duplicate prevention. BullMQ is used only to dispatch successfully inserted work, so Redis queue state is not treated as durable business state. Duplicate active refreshes are prevented by a partial unique index on `refresh_jobs(patient_id, study_id)` for `pending` and `claimed` jobs, with inserts using `ON CONFLICT DO NOTHING`. Workers atomically claim pending jobs in Postgres before calling the mock EHR service, so duplicate queue deliveries cannot double-process the same DB job. Retry handling is intentionally small and explicit: transient and rate-limit failures return to `pending` with exponential backoff, while permanent failures become terminal.
+PostgreSQL is the system of record for refresh eligibility, job lifecycle state, and duplicate prevention. Patient-study enrollment owns refresh schedule state, while `patient_ehr_endpoints` tracks patient-level EHR connections; scheduled work is expanded into endpoint-specific jobs. Duplicate active refreshes are prevented by a partial unique index on `refresh_jobs(patient_id, study_id, endpoint)` for `pending` and `claimed` jobs. BullMQ handles dispatch and delayed retries, but workers still claim in Postgres before processing so duplicate queue deliveries cannot double-process a DB job. Rate limiting and mock EHR behavior are intentionally small and explicit for the exercise.

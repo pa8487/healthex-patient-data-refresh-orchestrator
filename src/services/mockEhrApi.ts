@@ -12,14 +12,27 @@ export type MockEhrRefreshInput = {
   patientId: string;
   studyId: string;
   endpoint: string;
+  attempt: number;
 };
 
-export async function refreshFromMockEhr(
+type MockUpdateRequest = {
+  requestId: string;
+};
+
+export async function startPatientDataUpdate(
   input: MockEhrRefreshInput
+): Promise<MockUpdateRequest> {
+  return {
+    requestId: `${input.patientId}:${input.studyId}:${input.endpoint}:${input.attempt}`
+  };
+}
+
+export async function getPatientDataRetrievalStatus(
+  input: MockEhrRefreshInput & MockUpdateRequest
 ): Promise<MockEhrRefreshResult> {
   const endpoint = input.endpoint.toLowerCase();
 
-  if (endpoint.includes("transient")) {
+  if (endpoint.includes("transient") && input.attempt === 1) {
     return {
       success: false,
       type: "TRANSIENT",
@@ -27,7 +40,7 @@ export async function refreshFromMockEhr(
     };
   }
 
-  if (endpoint.includes("rate")) {
+  if (endpoint.includes("rate") && input.attempt === 1) {
     return {
       success: false,
       type: "RATE_LIMIT",
@@ -44,4 +57,15 @@ export async function refreshFromMockEhr(
   }
 
   return { success: true };
+}
+
+export async function refreshFromMockEhr(
+  input: MockEhrRefreshInput
+): Promise<MockEhrRefreshResult> {
+  const updateRequest = await startPatientDataUpdate(input);
+
+  return getPatientDataRetrievalStatus({
+    ...input,
+    requestId: updateRequest.requestId
+  });
 }

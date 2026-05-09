@@ -1,16 +1,18 @@
-import type { EligiblePatientStudy } from "../repositories/patientStudyRepository.js";
+import type { EligibleRefreshCandidate } from "../repositories/patientStudyRepository.js";
 
 const CONSENT_NEAR_EXPIRY_MS = 72 * 60 * 60 * 1000;
 const MAX_PRIORITY = 3;
 
-export function calculateRefreshPriority(patientStudy: EligiblePatientStudy): number {
-  const basePriority = patientStudy.defaultPriority;
+export function calculateRefreshPriority(
+  candidate: EligibleRefreshCandidate
+): number {
+  const basePriority = candidate.defaultPriority;
 
-  if (patientStudy.consentExpiresAt === null) {
+  if (candidate.consentExpiresAt === null) {
     return basePriority;
   }
 
-  const expiresInMs = patientStudy.consentExpiresAt.getTime() - Date.now();
+  const expiresInMs = candidate.consentExpiresAt.getTime() - Date.now();
   const consentIsNearExpiry =
     expiresInMs >= 0 && expiresInMs <= CONSENT_NEAR_EXPIRY_MS;
 

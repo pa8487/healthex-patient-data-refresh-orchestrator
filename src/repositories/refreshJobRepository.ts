@@ -5,6 +5,7 @@ export type CreateRefreshJobInput = {
   studyId: string;
   endpoint: string;
   priority: number;
+  scheduledAt: Date;
 };
 
 export type RefreshJob = {
@@ -48,8 +49,8 @@ export async function createPendingRefreshJob(
         status,
         scheduled_at
       )
-      VALUES ($1, $2, $3, $4, 'pending', NOW())
-      ON CONFLICT (patient_id, study_id)
+      VALUES ($1, $2, $3, $4, 'pending', $5)
+      ON CONFLICT (patient_id, study_id, endpoint)
         WHERE status IN ('pending', 'claimed')
         DO NOTHING
       RETURNING
@@ -63,7 +64,13 @@ export async function createPendingRefreshJob(
         max_attempts,
         scheduled_at
     `,
-    [input.patientId, input.studyId, input.endpoint, input.priority]
+    [
+      input.patientId,
+      input.studyId,
+      input.endpoint,
+      input.priority,
+      input.scheduledAt
+    ]
   );
 
   const row = result.rows[0];

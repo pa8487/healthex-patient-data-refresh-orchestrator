@@ -1,5 +1,7 @@
 import { getRefreshQueue } from "../queue/queue.js";
+import { checkEndpointThrottle } from "../queue/endpointThrottle.js";
 import {
+  type ClaimedRefreshJob,
   claimPendingRefreshJob,
   completeRefreshJob,
   failRefreshJob,
@@ -28,6 +30,38 @@ export type RefreshExecutionResult =
       errorMessage: string;
     };
 
+async function scheduleRetry(
+  job: ClaimedRefreshJob,
+  delayMs: number,
+  errorType: "TRANSIENT" | "RATE_LIMIT",
+  errorMessage: string
+): Promise<Extract<RefreshExecutionResult, { status: "retry_scheduled" }>> {
+  const scheduledAt = await scheduleRefreshJobRetry(
+    job,
+    delayMs,
+    errorType,
+    errorMessage
+  );
+
+  await getRefreshQueue().add(
+    "refresh",
+    { refreshJobId: job.id },
+    {
+      delay: delayMs,
+      jobId: `${job.id}:attempt:${job.attempts + 1}`,
+      priority: job.priority
+    }
+  );
+
+  return {
+    status: "retry_scheduled",
+    refreshJobId: job.id,
+    delayMs,
+    scheduledAt,
+    errorType
+  };
+}
+
 export async function executeRefreshJob(
   refreshJobId: string,
   workerId: string
@@ -41,10 +75,42 @@ export async function executeRefreshJob(
     };
   }
 
+  const throttle = await checkEndpointThrottle(claimedJob.endpoint);
+
+  if (!throttle.allowed) {
+    if (
+      shouldRetryFailure(
+        "RATE_LIMIT",
+        claimedJob.attempts,
+        claimedJob.maxAttempts
+      )
+    ) {
+      return scheduleRetry(
+        claimedJob,
+        throttle.retryAfterMs,
+        "RATE_LIMIT",
+        `Endpoint throttle delayed ${claimedJob.endpoint}`
+      );
+    }
+
+    await failRefreshJob(
+      claimedJob,
+      "RATE_LIMIT",
+      `Endpoint throttle exceeded retry budget for ${claimedJob.endpoint}`
+    );
+    return {
+      status: "failed",
+      refreshJobId: claimedJob.id,
+      errorType: "RATE_LIMIT",
+      errorMessage: `Endpoint throttle exceeded retry budget for ${claimedJob.endpoint}`
+    };
+  }
+
   const result = await refreshFromMockEhr({
     patientId: claimedJob.patientId,
     studyId: claimedJob.studyId,
-    endpoint: claimedJob.endpoint
+    endpoint: claimedJob.endpoint,
+    attempt: claimedJob.attempts
   });
 
   if (result.success) {
@@ -56,33 +122,16 @@ export async function executeRefreshJob(
   }
 
   if (
+    result.type !== "PERMANENT" &&
     shouldRetryFailure(result.type, claimedJob.attempts, claimedJob.maxAttempts)
   ) {
     const delayMs = calculateRetryDelayMs(claimedJob.attempts);
-    const scheduledAt = await scheduleRefreshJobRetry(
+    return scheduleRetry(
       claimedJob,
       delayMs,
       result.type,
       result.message
     );
-
-    await getRefreshQueue().add(
-      "refresh",
-      { refreshJobId: claimedJob.id },
-      {
-        delay: delayMs,
-        jobId: `${claimedJob.id}:attempt:${claimedJob.attempts + 1}`,
-        priority: claimedJob.priority
-      }
-    );
-
-    return {
-      status: "retry_scheduled",
-      refreshJobId: claimedJob.id,
-      delayMs,
-      scheduledAt,
-      errorType: result.type
-    };
   }
 
   await failRefreshJob(claimedJob, result.type, result.message);

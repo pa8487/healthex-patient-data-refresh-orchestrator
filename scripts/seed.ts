@@ -52,37 +52,59 @@ const patientStudies = [
   {
     patientId: patients[0].id,
     studyId: studies[0].id,
-    ehrEndpoint: "epic",
     nextRefreshExpression: "NOW() - INTERVAL '10 minutes'",
     consentExpiresExpression: "NOW() + INTERVAL '10 days'"
   },
   {
     patientId: patients[1].id,
     studyId: studies[0].id,
-    ehrEndpoint: "cerner",
     nextRefreshExpression: "NOW() - INTERVAL '2 hours'",
     consentExpiresExpression: "NOW() + INTERVAL '2 days'"
   },
   {
     patientId: patients[2].id,
     studyId: studies[1].id,
-    ehrEndpoint: "regional",
     nextRefreshExpression: "NOW() + INTERVAL '4 hours'",
     consentExpiresExpression: null
   },
   {
     patientId: patients[3].id,
     studyId: studies[2].id,
-    ehrEndpoint: "epic",
     nextRefreshExpression: "NOW() + INTERVAL '1 day'",
     consentExpiresExpression: null
   },
   {
     patientId: patients[0].id,
     studyId: studies[1].id,
-    ehrEndpoint: "cerner",
     nextRefreshExpression: "NOW() - INTERVAL '30 minutes'",
     consentExpiresExpression: "NOW() + INTERVAL '12 hours'"
+  }
+];
+
+const patientEhrEndpoints = [
+  {
+    patientId: patients[0].id,
+    ehrEndpoint: "epic-success"
+  },
+  {
+    patientId: patients[0].id,
+    ehrEndpoint: "cerner-transient"
+  },
+  {
+    patientId: patients[1].id,
+    ehrEndpoint: "regional-rate-limit"
+  },
+  {
+    patientId: patients[1].id,
+    ehrEndpoint: "cerner-permanent"
+  },
+  {
+    patientId: patients[2].id,
+    ehrEndpoint: "regional-success"
+  },
+  {
+    patientId: patients[3].id,
+    ehrEndpoint: "epic-success"
   }
 ];
 
@@ -91,6 +113,18 @@ async function seed(): Promise<void> {
   await query(schema);
 
   await withTransaction(async (client) => {
+    await client.query(
+      `
+        TRUNCATE TABLE
+          refresh_jobs,
+          patient_ehr_endpoints,
+          patient_studies,
+          patients,
+          studies
+        RESTART IDENTITY CASCADE
+      `
+    );
+
     for (const study of studies) {
       await client.query(
         `
@@ -101,10 +135,6 @@ async function seed(): Promise<void> {
             default_priority
           )
           VALUES ($1, $2, $3, $4)
-          ON CONFLICT (id) DO UPDATE
-          SET name = EXCLUDED.name,
-              refresh_frequency_minutes = EXCLUDED.refresh_frequency_minutes,
-              default_priority = EXCLUDED.default_priority
         `,
         [
           study.id,
@@ -120,9 +150,6 @@ async function seed(): Promise<void> {
         `
           INSERT INTO patients (id, external_id, name)
           VALUES ($1, $2, $3)
-          ON CONFLICT (id) DO UPDATE
-          SET external_id = EXCLUDED.external_id,
-              name = EXCLUDED.name
         `,
         [patient.id, patient.externalId, patient.name]
       );
@@ -134,14 +161,12 @@ async function seed(): Promise<void> {
           INSERT INTO patient_studies (
             patient_id,
             study_id,
-            ehr_endpoint,
             next_refresh_at,
             consent_expires_at
           )
           VALUES (
             $1,
             $2,
-            $3,
             ${patientStudy.nextRefreshExpression},
             ${
               patientStudy.consentExpiresExpression === null
@@ -149,16 +174,22 @@ async function seed(): Promise<void> {
                 : patientStudy.consentExpiresExpression
             }
           )
-          ON CONFLICT (patient_id, study_id) DO UPDATE
-          SET ehr_endpoint = EXCLUDED.ehr_endpoint,
-              next_refresh_at = EXCLUDED.next_refresh_at,
-              consent_expires_at = EXCLUDED.consent_expires_at
         `,
-        [
-          patientStudy.patientId,
-          patientStudy.studyId,
-          patientStudy.ehrEndpoint
-        ]
+        [patientStudy.patientId, patientStudy.studyId]
+      );
+    }
+
+    for (const endpoint of patientEhrEndpoints) {
+      await client.query(
+        `
+          INSERT INTO patient_ehr_endpoints (
+            patient_id,
+            ehr_endpoint,
+            is_active
+          )
+          VALUES ($1, $2, TRUE)
+        `,
+        [endpoint.patientId, endpoint.ehrEndpoint]
       );
     }
   });
@@ -174,9 +205,14 @@ async function seed(): Promise<void> {
       "SELECT COUNT(*) AS count FROM patient_studies"
     )
   ).rows;
+  const [{ count: endpointCount }] = (
+    await query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM patient_ehr_endpoints"
+    )
+  ).rows;
 
   console.log(
-    `Seed complete: ${patientCount} patients, ${studyCount} studies, ${enrollmentCount} patient-study rows.`
+    `Seed complete: ${patientCount} patients, ${studyCount} studies, ${enrollmentCount} patient-study rows, ${endpointCount} patient EHR endpoints.`
   );
 }
 

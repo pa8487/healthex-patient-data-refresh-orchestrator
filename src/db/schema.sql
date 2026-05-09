@@ -18,12 +18,27 @@ CREATE TABLE IF NOT EXISTS studies (
 CREATE TABLE IF NOT EXISTS patient_studies (
   patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
   study_id UUID NOT NULL REFERENCES studies(id) ON DELETE CASCADE,
-  ehr_endpoint TEXT NOT NULL,
   last_refresh_at TIMESTAMPTZ NULL,
   next_refresh_at TIMESTAMPTZ NOT NULL,
   consent_expires_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (patient_id, study_id)
+);
+
+ALTER TABLE patient_studies
+  DROP COLUMN IF EXISTS ehr_endpoint;
+
+ALTER TABLE patient_studies
+  ADD COLUMN IF NOT EXISTS last_refresh_at TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS next_refresh_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS consent_expires_at TIMESTAMPTZ NULL;
+
+CREATE TABLE IF NOT EXISTS patient_ehr_endpoints (
+  patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+  ehr_endpoint TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (patient_id, ehr_endpoint)
 );
 
 CREATE TABLE IF NOT EXISTS refresh_jobs (
@@ -43,7 +58,8 @@ CREATE TABLE IF NOT EXISTS refresh_jobs (
   worker_id TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (patient_id, study_id) REFERENCES patient_studies(patient_id, study_id) ON DELETE CASCADE
+  FOREIGN KEY (patient_id, study_id) REFERENCES patient_studies(patient_id, study_id) ON DELETE CASCADE,
+  FOREIGN KEY (patient_id, endpoint) REFERENCES patient_ehr_endpoints(patient_id, ehr_endpoint) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_patient_studies_next_refresh
@@ -53,8 +69,10 @@ CREATE INDEX IF NOT EXISTS idx_refresh_jobs_status_sched_priority
   ON refresh_jobs(status, scheduled_at, priority DESC, created_at);
 
 -- Database-enforced duplicate prevention keeps concurrent schedulers idempotent.
+DROP INDEX IF EXISTS idx_unique_active_refresh_job;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_refresh_job
-  ON refresh_jobs(patient_id, study_id)
+  ON refresh_jobs(patient_id, study_id, endpoint)
   WHERE status IN ('pending', 'claimed');
 
 CREATE OR REPLACE FUNCTION set_updated_at()
