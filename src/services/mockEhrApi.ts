@@ -32,6 +32,8 @@ export async function getPatientDataRetrievalStatus(
 ): Promise<MockEhrRefreshResult> {
   const endpoint = input.endpoint.toLowerCase();
 
+  // Endpoint names drive deterministic outcomes so the demo reliably exercises
+  // success, retryable, rate-limit, and terminal failure paths.
   if (endpoint.includes("transient") && input.attempt === 1) {
     return {
       success: false,

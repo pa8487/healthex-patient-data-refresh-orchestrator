@@ -64,6 +64,8 @@ export async function createPendingRefreshJob(
         scheduled_at
       )
       VALUES ($1, $2, $3, $4, 'pending', $5)
+      -- The partial unique index is the idempotency boundary for
+      -- concurrent schedulers; duplicates return no row instead of erroring.
       ON CONFLICT (patient_id, study_id, endpoint)
         WHERE status IN ('pending', 'claimed')
         DO NOTHING
@@ -101,6 +103,8 @@ export async function claimPendingRefreshJob(
 ): Promise<ClaimedRefreshJob | null> {
   const result = await query<RefreshJobRow>(
     `
+      -- This update is the worker lock. If it returns no row, the BullMQ
+      -- delivery is stale, duplicated, or not due yet, so the worker skips it.
       UPDATE refresh_jobs
       SET status = 'claimed',
           claimed_at = NOW(),
@@ -138,6 +142,8 @@ export async function claimPendingRefreshJob(
 
 export async function completeRefreshJob(job: ClaimedRefreshJob): Promise<void> {
   await withTransaction(async (client) => {
+    // Completion and schedule advancement must commit together so a successful
+    // refresh cannot leave the enrollment immediately due again.
     const completedJob = await client.query(
       `
         UPDATE refresh_jobs
@@ -179,6 +185,8 @@ export async function scheduleRefreshJobRetry(
 ): Promise<Date> {
   const result = await query<{ scheduled_at: Date }>(
     `
+      -- Retries reuse the lifecycle row for MVP simplicity. A production audit
+      -- trail would add an append-only refresh_job_attempts table.
       UPDATE refresh_jobs
       SET status = 'pending',
           scheduled_at = NOW() + ($2::INT * INTERVAL '1 millisecond'),

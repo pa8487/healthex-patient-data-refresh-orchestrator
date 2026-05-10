@@ -60,6 +60,8 @@ export async function scheduleEligibleRefreshJobs(
   );
 
   const eligibleCandidates = await findEligibleRefreshCandidates(filters);
+  // Candidates are endpoint-expanded; this keeps the API response readable by
+  // reporting both due enrollments and concrete endpoint jobs.
   const eligibleStudyCount = getUniqueStudyCount(eligibleCandidates);
   const insertedJobs: RefreshJob[] = [];
 
@@ -134,6 +136,8 @@ export async function scheduleEligibleRefreshJobs(
         }))
       );
     } catch (error) {
+      // Postgres is authoritative. If Redis enqueue fails after DB insert,
+      // terminally mark those rows so they are visible instead of stranded.
       try {
         await markPendingRefreshJobsFailed(
           insertedJobs.map((job) => job.id),

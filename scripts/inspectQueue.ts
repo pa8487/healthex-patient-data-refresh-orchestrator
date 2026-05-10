@@ -73,6 +73,8 @@ function sortQueueSnapshot(
   left: QueueJobSnapshot,
   right: QueueJobSnapshot
 ): number {
+  // This mirrors the demo expectation, not BullMQ internals: ready jobs should
+  // appear before delayed jobs, then lower BullMQ priority wins.
   if (left.ready !== right.ready) {
     return left.ready ? -1 : 1;
   }

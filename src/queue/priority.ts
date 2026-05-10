@@ -7,5 +7,7 @@ export function toBullMqPriority(refreshPriority: number): number {
     MAX_REFRESH_PRIORITY
   );
 
+  // Domain priority is higher-is-better, while BullMQ dequeues lower numeric
+  // priority first, so the value is inverted at the queue boundary.
   return MAX_REFRESH_PRIORITY - normalizedPriority + 1;
 }

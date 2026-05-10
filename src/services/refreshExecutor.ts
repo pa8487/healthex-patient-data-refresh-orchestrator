@@ -59,6 +59,8 @@ async function scheduleRetry(
   );
 
   try {
+    // The DB row is already pending with a future scheduled_at. This delayed
+    // queue message is only the wake-up mechanism for the next claim attempt.
     await getRefreshQueue().add(
       "refresh",
       { refreshJobId: job.id },
@@ -141,6 +143,8 @@ export async function executeRefreshJob(
   const claimedJob = await claimPendingRefreshJob(refreshJobId, workerId);
 
   if (claimedJob === null) {
+    // BullMQ is at-least-once. A skipped claim is expected for duplicate,
+    // stale, or not-yet-due deliveries and should not call the EHR.
     logger.warn(
       {
         event: "refresh_claim_skipped",

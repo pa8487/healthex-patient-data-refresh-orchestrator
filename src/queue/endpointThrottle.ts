@@ -52,6 +52,8 @@ export async function checkEndpointThrottle(
   const key = `endpoint-throttle:${endpoint.toLowerCase()}`;
   const redis = getQueueConnection();
 
+  // Fixed-window throttling is intentionally small for the exercise. The
+  // production version would use a token bucket and endpoint health signals.
   const requestCount = await redis.incr(key);
 
   if (requestCount === 1) {
